@@ -186,9 +186,9 @@ RUN ./scripts/deploy.sh
 ```
 Donde
 * Se despliega una imagen de centos de docker con python3.
-* Se instala las dependencia de connexion y fabric
+* Se instala las dependencia de connexion y fabric.
 * Se monta el endpoint en el host dentro del contenedor.
-* Se ejecuta la aplicación flask del endpoint
+* Se ejecuta la aplicación flask del endpoint.
 
 
 ### 5. :heavy_check_mark:

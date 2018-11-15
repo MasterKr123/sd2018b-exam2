@@ -12,3 +12,12 @@ services:
             - REGISTRY_HTTP_TLS_KEY=/certs/domain.key
         ports:
             - '443:443'
+      ngrok:
+        image: gtriggiano/ngrok-tunnel
+        container_name: ngrok
+        environment:
+            - 'TARGET_HOST=servicetotunnel'
+            - 'TARGET_PORT=5000'
+            - 'NGROK_REGION=CO'
+        ports:
+            - '4040:4040'
