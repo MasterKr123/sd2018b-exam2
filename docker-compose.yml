@@ -3,7 +3,7 @@ services:
     registry:
         image: registry:2
         restart: always
-        container_name: registry
+        container_name: Registry_Server
         volumes:
             - './docker_data/certs:/certs'
         environment:
@@ -12,12 +12,18 @@ services:
             - REGISTRY_HTTP_TLS_KEY=/certs/domain.key
         ports:
             - '443:443'
-      ngrok:
-        image: gtriggiano/ngrok-tunnel
-        container_name: ngrok
+    ci_server:
+        build: CI_Server
+        container_name: CI_Server
         environment:
-            - 'TARGET_HOST=servicetotunnel'
-            - 'TARGET_PORT=5000'
-            - 'NGROK_REGION=CO'
+          - 'CI_SERVER_HTTP_ADDR=0.0.0.0:8080'
         ports:
-            - '4040:4040'
+          - '8080:8080'
+    ngrok:
+        image: wernight/ngrok
+        ports:
+          - 0.0.0.0:4040:4040
+        links:
+          - ci_server
+        environment:
+          NGROK_PORT: ci_server_swan:8080
