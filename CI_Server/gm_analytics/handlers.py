@@ -18,7 +18,7 @@ def repository_changed():
 
     if branch_merged:
         pullrequest_sha  = json_pullrequest["pull_request"]["head"]["sha"]
-        json_image_url     = "https://raw.githubusercontent.com/MasterKr123/sd2018b-exam2/" + pullrequest_sha + "images.json"
+        json_image_url     = "https://raw.githubusercontent.com/MasterKr123/sd2018b-exam2/" + pullrequest_sha + "/" +"images.json"
         response_image_url = requests.get(json_image_url)
         image_data    =  json.loads(response_image_url.content)
 
