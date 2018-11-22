@@ -26,4 +26,4 @@ services:
         links:
           - ci_server
         environment:
-          NGROK_PORT: ci_server_swan:8080
+          NGROK_PORT: ci_server:8080

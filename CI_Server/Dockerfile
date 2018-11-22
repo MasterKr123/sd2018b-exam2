@@ -1,12 +1,13 @@
 FROM python:3.6
 
+COPY . /handler_endpoint
+
+WORKDIR /handler_endpoint
+
 RUN pip3.6 install --upgrade pip
 RUN pip3.6 install connexion[swagger-ui]
-RUN pip3.6 install --trusted-host pypi.python.org docker[tls]
+RUN pip3.6 install --trusted-host pypi.python.org -r requirements.txt
 
-COPY ./flask_endpoint /flask_endpoint
-WORKDIR /flask_endpoint
+RUN ["chmod", "+x", "/handler_endpoint/deploy.sh"]
 
-RUN ["chmod","+x","/flask_endpoint/scripts/deploy.sh"]
-
-RUN ./scripts/deploy.sh
+CMD ./deploy.sh
