@@ -1,0 +1,9 @@
+{
+  "images": [
+    {
+      "service_name": "httpd",
+      "version": "1.0",
+      "type": "Docker"
+    }
+  ]
+}
