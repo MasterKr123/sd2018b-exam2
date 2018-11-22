@@ -85,70 +85,15 @@ Para generar los certificados que aseguran al docker registry se hace uso de ssl
 ![][1]
 **Figura 1**. Certificados generados.
 
-#### 2.2 Crear el docker registry
-Ejecutar el comando:
-```
-docker run -d \                                   
-  --restart=always \
-  --name registry \
-  -v `pwd`/docker_data/certs:/certs \
-  -e REGISTRY_HTTP_ADDR=0.0.0.0:443 \
-  -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt \
-  -e REGISTRY_HTTP_TLS_KEY=/certs/domain.key \
-  -p 443:443 \
-  registry
-```
-![][2]
-**Figura 2**. Creación registry.
-
-#### 2.3 Descargar las imagenes de docker
-
-Para descargar imagenes de docker ejecutamos el comando:
-```
-docker pull imagen
-```
-donde "imagen" es la imagen del repositorio de docker (ej: httpd).
-
-Para verificar las imagenes descargadas de docker se ejecuta:
-```
-docker images
-```
-![][3]
-**Figura 3**. Imagenes descargadas de docker.
-
-#### 2.4 Subir las imagenes al registry
-Primero, se debe renombrar las imagenes descargadas de docker para poder subirlas al docker registry por lo cual se ejecuta el comando:
-```
-docker tag imagen jorgeregistry/my-imagen
-```
-Donde:
-* "imagen" corresponde a alguna de las imagenes listadas (ej: httpd).
-* "jorgeregistry/my-imagen" corresponde al nuevo nombre (ej: my-imagen puede ser httpd).
-
-Luego, se ejecuta el siguiente comando para subir la imagen:
-```
-docker push jorgeregistry/my-imagen
-```
-Donde "jorgeregistry/my-imagen" es la imagen renombrada anteriormente
-
-#### 2.5 Configuración del cliente del docker REGISTRY_HTTP_ADDR
-Para que el cliente pueda consumir recursos del nuevo docker registry, requiere del certificado generado en el punto 2.1 (domain.crt).
-
-Una ves obtenga este certificado, mediante scp por ejemplo, se debe alojar en un directorio creado:
-```
-mkdir -p /etc/docker/certs.d/jorgeregistry:443/
-cp -rf ~/domain.crt /etc/docker/certs.d/jorgeregistry:443/
-```
-
-### 3. Generación del artefacto
-Para la creación del artefacto se crea un docker_compose definiendo el servicio de registry:
+### 3-4. Generación del artefacto e integración
+Para la creación del artefacto se crea un docker_compose definiendo tres servicios: registry, integración continua y ngrok:
 ```
 version: '3'
 services:
     registry:
         image: registry:2
         restart: always
-        container_name: registry
+        container_name: Registry_Server
         volumes:
             - './docker_data/certs:/certs'
         environment:
@@ -157,42 +102,165 @@ services:
             - REGISTRY_HTTP_TLS_KEY=/certs/domain.key
         ports:
             - '443:443'
+    ci_server:
+        build: CI_Server
+        container_name: CI_Server
+        volumes:
+          - //var/run/docker.sock:/var/run/docker.sock
+        environment:
+          - 'CI_SERVER_HTTP_ADDR=0.0.0.0:8080'
+        ports:
+          - '8080:8080'
+    ngrok:
+        image: wernight/ngrok
+        ports:
+          - '0.0.0.0:4040:4040'
+        links:
+          - ci_server
+        environment:
+          NGROK_PORT: ci_server:8080
 ```
-El archivo compose que define el servicio registry:
-* Usa una imagen que es construida desde DockerHub (registry:2).
-* Con volumes, monta el directorio del proyecto (directorio actual) en el host en ./docker_data/certs:/certs dentro del contenedor.
-* Configura las variables de entorno del puerto y certificados en la ubicación de los volumenes exportados.
-* Reenvía el puerto 443 expuesto en el contenedor al puerto 443 en la máquina host.
 
-Para desplegar los servicios se ejecuta el comando:
+Donde:
+
+* registry: este servicio hace referencia al registro local privado que almacena las imagenes de Docker que se estan creando en el merged de develop. En la segunda parte de esta guia se tiene dos certificados SSL autofirmados creados con OpenSSL que permiten que el servidor sea confiable.
+
+* ngrok: está vinculada al ci_server en su puerto 8080 para exponer el punto final del servidor CI.
+
+* ci_server: tiene el Dockerfile para construir una imagen una vez realizado el merged. Por otro lado, administra el GitHub WebHook JSON y decide si el pull request realizado en el repositorio fue un merged. Si es asi, se construye la imágene en el registry.
+
+En el ci_server depende de una serie de ficheros:
+
+* El fichero indexer contiene los endpoint de API Rest para recibir los eventos del Ngrok.
 ```
-docker-compose up
+swagger: '2.0'
+info:
+  title: User API
+  version: "0.1.0"
+paths:
+  /ciserver/develop/changed:
+    post:
+      x-swagger-router-controller: gm_analytics
+      operationId: handlers.repository_changed
+      summary: The repository has changed.
+      responses:
+        200:
+          description: Successful response.
+          schema:
+            type: object
+            properties:
+              command_return:
+                type: string
+                description: The information is procesing
+  /:
+    post:
+      x-swagger-router-controller: gm_analytics
+      operationId: handlers.hello
+      summary: The repository has changed.
+      responses:
+        200:
+          description: Successful response.
+          schema:
+            type: object
+            properties:
+              command_return:
+                type: string
+                description: The information is procesing
+```  
+
+* El fichero handlers.py es el archivo encargado de realizar las acciónes a tomar de acuerdo al evento anterior:
 ```
+import os
+import logging
+import requests
+import json
+import docker
+from flask import Flask, request, json
+
+def hello():
+    result = {'command_return': 'work'}
+    return result
+
+def repository_changed():
+    result_swagger   = ""
+    post_json_data   = request.get_data()
+    string_json      = str(post_json_data, 'utf-8')
+    json_pullrequest = json.loads(string_json)
+    branch_merged = json_pullrequest["pull_request"]["merged"]
+    if branch_merged:
+        pullrequest_sha  = json_pullrequest["pull_request"]["head"]["sha"]
+        json_image_url     = "https://raw.githubusercontent.com/MasterKr123/sd2018b-exam2/" + pullrequest_sha + "/images.json"
+        response_image_url = requests.get(json_image_url)
+        image_data    =  json.loads(response_image_url.content)
+        for service in image_data:
+            service_name = service["service_name"]
+            image_type = service["type"]
+            image_version = service["version"]
+            if image_type == 'Docker':
+                dockerfile_image_url = "https://raw.githubusercontent.com/MasterKr123/sd2018b-exam2/" + pullrequest_sha + "/" + service_name + "/Dockerfile"
+                file_response = requests.get(dockerfile_image_url)
+                file = open("Dockerfile","w")
+                file.write(str(file_response.content, 'utf-8'))
+                file.close()
+                image_tag  = "Registry_Server:443/" + service_name + ":" + image_version
+                client = docker.DockerClient(base_url='unix://var/run/docker.sock')
+                client.images.build(path="./", tag=image_tag)
+                client.images.push(image_tag)
+                client.images.remove(image=image_tag, force=True)
+                result_swagger = image_tag + " - Image built - " + result_swagger
+            else:
+                out = {'command return' : 'JSON file have an incorrect format'}
+        out = {'cammand return' : result_swagger}
+    else:
+        out= {'command_return': 'Pull request was not merged'}
+        return out
+```
+
+* El Dockerfile es el encargado de crear el ci_server con los requerimientos.
+```
+FROM python:3.6
+
+COPY . /handler_endpoint
+
+WORKDIR /handler_endpoint
+
+RUN pip3.6 install --upgrade pip
+RUN pip3.6 install connexion[swagger-ui]
+RUN pip3.6 install --trusted-host pypi.python.org -r requirements.txt
+
+RUN ["chmod", "+x", "/handler_endpoint/deploy.sh"]
+
+CMD ./deploy.sh
+```
+
+* El deploy.sh es el encargado de levantar la aplicación.
+```
+export PYTHONPATH=$PYTHONPATH:`pwd`
+export FLASK_ENV=development
+connexion run gm_analytics/swagger/indexer.yaml --debug -p 8080
+```
+
+### Pruebas
+
+* Despliegue de los servicios alojados en el docker_compose:
+![][2]
+
+* Status del servicio Ngrok para publicar la maquina de trabajo.
+![][3]
+
+* Creación del webhook para la conexion de los eventos.
 ![][4]
-**Figura 4**. Registry up.
 
-### 4.Integración
-Para la integraión, se creo un servidor CI (Continuous Integration) mediante tecnologia Docker.
+* Merged de integración a la rama develop.
+![][5]
 
-```
-FROM centos/python-36-centos7
+* Evidencia de la respuesta del webhook.
+![][6]
 
-RUN pip3.6 install connexion
-RUN pip3.6 install fabric
-COPY ./flask_endpoint /flask_endpoint
-WORKDIR /flask_endpoint
-
-RUN ./scripts/deploy.sh
-```
-Donde
-* Se despliega una imagen de centos de docker con python3.
-* Se instala las dependencia de connexion y fabric.
-* Se monta el endpoint en el host dentro del contenedor.
-* Se ejecuta la aplicación flask del endpoint.
-
+* Evidencia de la respuesta del servidor ante el merged.
+![][7]
 
 ### 5. :heavy_check_mark:
-
 
 ### 6. Dificultades
 Para el aprovisionamiento de la infraestructura y aplicaciones se encontraron las siguientes dificultades:
@@ -203,9 +271,6 @@ Algunas ejecuciones requerian de permisos root, para solucionarlo supuse que el 
 
 * Información sobre los temas  
 A pesar de la ardua documentación que contiene Docker, la información necesaria fue dificil de encontrar. La acción tomada fue realizar una investigación e interpretación de los temas.
-
-
-
 
 
 ### Referencias
@@ -221,6 +286,9 @@ A pesar de la ardua documentación que contiene Docker, la información necesari
 * https://github.com/MasterKr123/sd2018b-exam1/tree/jcastano/sd2018b-exam1/cookbooks/ci/files/default
 
 [1]: images/generateCertificates.png
-[2]: images/createRegistry.png
-[3]: images/dockerimages.png
-[4]: registryup.png
+[2]: images/composeup.png
+[3]: images/ngrokup.png
+[4]: images/webhook.png
+[5]: images/firspullrequest.png
+[6]: images/response.png
+[7]: images/pullrequest.png
